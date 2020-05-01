@@ -1,39 +1,48 @@
 package main
 
 import (
-	"fmt"
-	"github.com/idawud/server-monitor/color-print"
-	"github.com/idawud/server-monitor/service"
+	"context"
+	"github.com/idawud/server-monitor/handler"
+	"log"
+	"net/http"
 	"os"
-	"strconv"
-	"text/tabwriter"
+	"github.com/gorilla/mux"
+	"os/signal"
 	"time"
 )
 
 func main() {
-	var endpoints = []string{
-		"https://stackoverflow.com/questions/38563285/how-to-execute-a-head-in-go",
-		"http://localhost:8080/",
-	}
- 
-	writer := tabwriter.NewWriter(os.Stdout, 0, 16, 1, '\t', tabwriter.AlignRight)
-	_, _ = fmt.Fprintln(writer, "Endpoint\t\t\tAvailability")
-	_ = writer.Flush()
+	l := log.New(os.Stdout, "server-monitor ", log.LstdFlags)
+	ep := handler.NewWebSocketEndpoint(l)
 
-	for {
-		printEndpointStatus(endpoints, writer)
-		time.Sleep(time.Second * 25)
-	}
-}
+	sm := mux.NewRouter()
+	getRouter := sm.Methods(http.MethodGet).Subrouter()
+	getRouter.HandleFunc("/feedback", ep.MainEndpoint)
 
-func printEndpointStatus(endpoints []string, writer *tabwriter.Writer) {
-	for _, endpoint := range endpoints {
-		availability := service.CheckEndpintAvailabity(endpoint)
-		if availability {
-			_, _ = fmt.Fprintln(writer, color_print.Green(endpoint+"\t\t\t"+strconv.FormatBool(availability)))
-		} else {
-			_, _ = fmt.Fprintln(writer, color_print.Red(endpoint+"\t\t\t"+strconv.FormatBool(availability)))
+	server := &http.Server{
+		Addr: ":8080",
+		Handler: sm,
+		IdleTimeout:120*time.Second,
+		ReadTimeout: 1*time.Second,
+		WriteTimeout:1*time.Second,
+	}
+
+	log.Println("Server running on http://localhost:8080/ started at: ", time.Stamp )
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil {
+			l.Fatal(err)
 		}
-		_ = writer.Flush()
-	}
+	}()
+
+	// Graceful shutdown
+	sigChan := make(chan os.Signal)
+	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, os.Kill)
+
+	sig := <-sigChan
+	l.Println("Graceful shutdown", sig)
+
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	_ = server.Shutdown(ctx)
 }
